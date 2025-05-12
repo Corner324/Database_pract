@@ -21,34 +21,42 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 
 def get_bulletin_urls(start_date: date, end_date: date) -> list:
-    """Парсит сайт SPIMEX и возвращает список URL бюллетеней за указанный период."""
+    """Парсит сайт SPIMEX и возвращает список URL бюллетеней за указанный период, включая пагинацию."""
     base_url = "https://spimex.com/markets/oil_products/trades/results/"
     bulletin_urls = []
+    page = 1
+    max_pages = 388  # Максимальное количество страниц
 
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        }
-        response = requests.get(base_url, headers=headers)
-        response.raise_for_status()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    }
 
-        logger.info(f"Успешно получен ответ от {base_url}, длина HTML: {len(response.text)}")
+    while page <= max_pages:
+        try:
+            # Формируем URL для текущей страницы
+            page_url = f"{base_url}?page=page-{page}" if page > 1 else base_url
+            logger.info(f"Обрабатывается страница {page}: {page_url}")
 
-        soup = BeautifulSoup(response.text, "html.parser")
+            response = requests.get(page_url, headers=headers)
+            response.raise_for_status()
 
-        links = soup.find_all("a", class_="accordeon-inner__item-title link xls")
-        logger.info(f"Найдено {len(links)} ссылок с классом 'accordeon-inner__item-title link xls'")
+            soup = BeautifulSoup(response.text, "html.parser")
+            links = soup.find_all("a", class_="accordeon-inner__item-title link xls")
+            logger.info(f"Найдено {len(links)} ссылок на странице {page}")
 
-        for link in links:
-            href = link.get("href")  # type: ignore
-            if not href:
-                logger.debug("Пропущена ссылка без href")
-                continue
+            found_valid_date = False
+            for link in links:
+                href = link.get("href")  # type: ignore
+                if not href:
+                    logger.debug("Пропущена ссылка без href")
+                    continue
 
-            href = href.split("?")[0]  # type: ignore
+                href = href.split("?")[0]   # type: ignore
+                if "/upload/reports/oil_xls/oil_xls_" not in href or not href.endswith(".xls"):
+                    logger.debug(f"Пропущена ссылка {href}: не соответствует шаблону oil_xls_")
+                    continue
 
-            if "/upload/reports/oil_xls/oil_xls_" in href and href.endswith(".xls"):
                 try:
                     file_date_str = href.split("oil_xls_")[1][:8]
                     file_date = datetime.strptime(file_date_str, "%Y%m%d").date()
@@ -56,18 +64,42 @@ def get_bulletin_urls(start_date: date, end_date: date) -> list:
                         full_url = href if href.startswith("http") else f"https://spimex.com{href}"
                         bulletin_urls.append((full_url, file_date))
                         logger.debug(f"Добавлена ссылка: {full_url}, дата: {file_date}")
+                        found_valid_date = True
                     else:
                         logger.debug(f"Ссылка {href} вне диапазона дат")
                 except (IndexError, ValueError) as e:
                     logger.warning(f"Не удалось извлечь дату из ссылки {href}: {e}")
-            else:
-                logger.debug(f"Пропущена ссылка {href}: не соответствует шаблону oil_xls_")
 
-        logger.info(f"Найдено {len(bulletin_urls)} подходящих бюллетеней")
-        return bulletin_urls
-    except Exception as e:
-        logger.error(f"Ошибка при парсинге сайта {base_url}: {e}")
-        return []
+            # Если на странице нет ссылок в нужном диапазоне дат и даты старше 2023, прекращаем
+            if not found_valid_date and page > 1:
+                earliest_date = min(
+                    (
+                        datetime.strptime(link.get("href").split("oil_xls_")[1][:8], "%Y%m%d").date()   # type: ignore
+                        for link in links
+                        if link.get("href") and "oil_xls_" in link.get("href")   # type: ignore
+                    ),
+                    default=end_date,
+                )
+                if earliest_date < date(2023, 1, 1):
+                    logger.info("Достигнута страница с данными до 2023 года, завершаем сбор")
+                    break
+
+            page += 1
+
+            # Проверяем, есть ли следующая страница
+            pagination = soup.find("div", class_="bx-pagination-container")
+            if pagination:
+                next_page = pagination.find("li", class_="bx-pag-next")   # type: ignore
+                if not next_page or not next_page.find("a"):   # type: ignore
+                    logger.info("Достигнута последняя страница пагинации")
+                    break
+
+        except Exception as e:
+            logger.error(f"Ошибка при обработке страницы {page} ({page_url}): {e}")
+            break
+
+    logger.info(f"Всего найдено {len(bulletin_urls)} подходящих бюллетеней")
+    return bulletin_urls
 
 
 def download_bulletin(url: str, output_path: str) -> bool:
@@ -95,7 +127,6 @@ def parse_bulletin(file_path: str, trade_date: date) -> pd.DataFrame:
             return None  # type: ignore
 
         headers = df.iloc[header_row_index].fillna("").tolist()
-
         headers_clean = [h.replace("\n", " ").strip() for h in headers[1:]]
 
         required_columns = {
@@ -132,9 +163,7 @@ def parse_bulletin(file_path: str, trade_date: date) -> pd.DataFrame:
             data_df[col] = pd.to_numeric(data_df[col], errors="coerce").fillna(0)
 
         data_df = data_df[data_df["Количество Договоров, шт."] > 0]
-
         data_df = data_df[list(required_columns.keys())].rename(columns=required_columns)
-
         data_df = data_df[~data_df["exchange_product_id"].str.contains("Итог", case=False, na=False)]
 
         data_df["exchange_product_id"] = data_df["exchange_product_id"].astype(str)
@@ -152,7 +181,6 @@ def parse_bulletin(file_path: str, trade_date: date) -> pd.DataFrame:
 
         logger.debug(f"Значения столбца date: {data_df['date'].head(5).to_list()}")
         logger.debug(f"Тип значений столбца date: {type(data_df['date'].iloc[0])}")
-
         logger.debug(f"Столбцы DataFrame: {data_df.columns.tolist()}")
         logger.debug(f"Типы данных:\n{data_df.dtypes}")
         logger.debug(f"Первые 5 строк после обработки:\n{data_df.head(5).to_string()}")
@@ -235,7 +263,6 @@ def process_bulletins(start_date: date, end_date: date, output_dir: str = "bulle
     try:
         for url, trade_date in bulletin_urls:
             output_path = os.path.join(output_dir, f"oil_xls_{trade_date.strftime('%Y%m%d')}.xls")
-
             if download_bulletin(url, output_path):
                 data_df = parse_bulletin(output_path, trade_date)
                 if data_df is not None:
