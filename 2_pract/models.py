@@ -1,23 +1,26 @@
-from sqlalchemy import Column, Date, DateTime, Float, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
+from datetime import datetime
 
-# Создаем базовый класс для моделей
-BaseModel = declarative_base()
+from sqlalchemy import Date, DateTime, Float, Integer, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class BaseModel(DeclarativeBase):
+    pass
 
 
 class SpimexTradingResult(BaseModel):
     __tablename__ = "spimex_trading_results"
 
-    id = Column(Integer, primary_key=True)
-    exchange_product_id = Column(String, nullable=False)
-    exchange_product_name = Column(String, nullable=False)
-    oil_id = Column(String, nullable=False)
-    delivery_basis_id = Column(String, nullable=False)
-    delivery_basis_name = Column(String, nullable=False)
-    delivery_type_id = Column(String, nullable=False)
-    volume = Column(Float, nullable=False)
-    total = Column(Float, nullable=False)
-    count = Column(Integer, nullable=False)
-    date = Column(Date, nullable=False)
-    created_on = Column(DateTime, nullable=False)
-    updated_on = Column(DateTime, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exchange_product_id: Mapped[str] = mapped_column(String, nullable=False)
+    exchange_product_name: Mapped[str] = mapped_column(String, nullable=False)
+    oil_id: Mapped[str] = mapped_column(String, nullable=False)
+    delivery_basis_id: Mapped[str] = mapped_column(String, nullable=False)
+    delivery_basis_name: Mapped[str] = mapped_column(String, nullable=False)
+    delivery_type_id: Mapped[str] = mapped_column(String, nullable=False)
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    total: Mapped[float] = mapped_column(Float, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, nullable=False)
+    date: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    created_on: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_on: Mapped[datetime] = mapped_column(DateTime, nullable=False)
