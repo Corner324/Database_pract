@@ -244,24 +244,17 @@ def parse_bulletin(file_path: str, trade_date: date) -> List[dict]:
 
 
 async def save_to_database(records: List[dict], session: AsyncSession, batch_size: int = 1000) -> None:
-    """Асинхронно сохраняет записи в базу данных батчами."""
-    try:
-        if not records:
-            logger.info("Нет данных для сохранения")
-            return
+    """Асинхронно сохраняет записи в базу данных без промежуточного коммита (атомарно)."""
+    if not records:
+        logger.info("Нет данных для сохранения")
+        return
 
-        logger.info(f"Сохранение {len(records)} записей в базу данных")
+    logger.info(f"Сохранение {len(records)} записей в базу данных (одна транзакция)")
 
-        for i in range(0, len(records), batch_size):
-            batch = records[i : i + batch_size]
-            stmt = insert(SpimexTradingResult).values(batch)
-            await session.execute(stmt)
-            await session.commit()
-            logger.info(f"Сохранен батч из {len(batch)} записей")
-
-    except Exception as e:
-        logger.error(f"Ошибка при сохранении в базу данных: {e}")
-        await session.rollback()
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
+        stmt = insert(SpimexTradingResult).values(batch)
+        await session.execute(stmt)
 
 
 async def process_bulletins(start_date: date, end_date: date, output_dir: str = "bulletins") -> None:
@@ -280,8 +273,13 @@ async def process_bulletins(start_date: date, end_date: date, output_dir: str = 
 
     # Асинхронно сохраняем данные батчами
     async with async_sessionmaker(async_engine)() as session:
-        tasks = [save_to_database(all_records, session)]
-        await asyncio.gather(*tasks)
+        try:
+            await save_to_database(all_records, session)
+            await session.commit()  # <- один коммит на все батчи
+            logger.info("Все данные успешно сохранены")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении: {e}")
+            await session.rollback()
 
 
 if __name__ == "__main__":
