@@ -21,7 +21,7 @@ ASYNC_DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PO
 try:
     # Синхронный движок для создания таблиц и проверок
     sync_engine = create_engine(SYNC_DATABASE_URL, pool_pre_ping=True)
-    BaseModel.metadata.create_all(sync_engine, checkfirst=True)
+    # BaseModel.metadata.create_all(sync_engine, checkfirst=True)
     logger.info("Таблицы созданы или уже существуют")
 
     # Асинхронный движок для работы с данными
@@ -38,3 +38,5 @@ try:
 except Exception as e:
     logger.error(f"Ошибка подключения к базе данных: {e}")
     raise
+
+DATABASE_URL = SYNC_DATABASE_URL
