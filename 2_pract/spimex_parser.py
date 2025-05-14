@@ -280,9 +280,3 @@ async def process_bulletins(start_date: date, end_date: date, output_dir: str = 
     await asyncio.gather(*tasks)
 
     logger.info(f"Сохранено {len(all_records)} записей в {len(batches)} параллельных батчах")
-
-
-if __name__ == "__main__":
-    from datetime import date
-
-    asyncio.run(process_bulletins(date(2023, 4, 22), date(2025, 5, 11)))
