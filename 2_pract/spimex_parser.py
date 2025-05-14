@@ -243,25 +243,23 @@ def parse_bulletin(file_path: str, trade_date: date) -> List[dict]:
         return []
 
 
-async def save_to_database(records: List[dict], session: AsyncSession, batch_size: int = 1000) -> None:
-    """Асинхронно сохраняет записи в базу данных без промежуточного коммита (атомарно)."""
-    if not records:
-        logger.info("Нет данных для сохранения")
-        return
-
-    logger.info(f"Сохранение {len(records)} записей в базу данных (одна транзакция)")
-
-    for i in range(0, len(records), batch_size):
-        batch = records[i : i + batch_size]
-        stmt = insert(SpimexTradingResult).values(batch)
-        await session.execute(stmt)
+async def save_batch(batch: List[dict]) -> None:
+    """Сохраняет один батч данных в базу данных с отдельной сессией."""
+    async with async_sessionmaker(async_engine)() as session:
+        try:
+            stmt = insert(SpimexTradingResult).values(batch)
+            await session.execute(stmt)
+            await session.commit()
+            logger.info(f"Сохранен батч из {len(batch)} записей")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении батча: {e}")
+            await session.rollback()
 
 
 async def process_bulletins(start_date: date, end_date: date, output_dir: str = "bulletins") -> None:
     """Обрабатывает бюллетени за указанный период."""
     os.makedirs(output_dir, exist_ok=True)
 
-    # Собираем все данные
     bulletin_urls = await get_bulletin_urls(start_date, end_date)
     all_records = []
 
@@ -271,15 +269,17 @@ async def process_bulletins(start_date: date, end_date: date, output_dir: str = 
             records = parse_bulletin(output_path, trade_date)
             all_records.extend(records)
 
-    # Асинхронно сохраняем данные батчами
-    async with async_sessionmaker(async_engine)() as session:
-        try:
-            await save_to_database(all_records, session)
-            await session.commit()  # <- один коммит на все батчи
-            logger.info("Все данные успешно сохранены")
-        except Exception as e:
-            logger.error(f"Ошибка при сохранении: {e}")
-            await session.rollback()
+    if not all_records:
+        logger.info("Нет данных для сохранения в базу")
+        return
+
+    batch_size = 1000
+    batches = [all_records[i : i + batch_size] for i in range(0, len(all_records), batch_size)]
+
+    tasks = [save_batch(batch) for batch in batches]
+    await asyncio.gather(*tasks)
+
+    logger.info(f"Сохранено {len(all_records)} записей в {len(batches)} параллельных батчах")
 
 
 if __name__ == "__main__":
